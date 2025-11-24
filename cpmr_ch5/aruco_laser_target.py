@@ -32,6 +32,8 @@ def euler_from_quaternion(quaternion):
     yaw = np.arctan2(siny_cosp, cosy_cosp)
 
     return roll, pitch, yaw
+    
+    
 
 if parse(cv2.__version__) >= parse('4.7.0'):
     def local_estimatePoseSingleMarkers(corners, marker_size, mtx, distortion):
@@ -89,6 +91,19 @@ class ArucoTarget(Node):
         self.create_subscription(Image, self._image_topic, self._image_callback, 1)
         self.create_subscription(CameraInfo, self._info_topic, self._info_callback, 1)
         
+        # --- FIX: INITIALIZE VARIABLES FIRST ---
+        # We define these BEFORE creating subscriptions so they exist when callbacks fire
+        self.target_locked = False     
+        self.obstacle_detected = False 
+        # ---------------------------------------
+        
+        # --- NEW: LiDAR Subscription ---
+        # We subscribe to the scan topic to detect obstacles
+        self.create_subscription(LaserScan, "/scan", self._scan_callback, 1)
+        self._safety_stop = False  # Flag to trigger emergency stop
+        self._lidar_threshold = 0.8 # Meters. Stop if anything is closer than this.
+        # -------------------------------
+        
         # Create publisher for velocity commands
         self._cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
 
@@ -109,6 +124,34 @@ class ArucoTarget(Node):
             self._image = None
             self._cameraMatrix = None
             self.get_logger().info(f"using dictionary {tag_set}")
+            
+        # --- NEW: LiDAR Callback ---
+    def _scan_callback(self, msg):
+        """
+        Checks LiDAR data for obstacles.
+        Updates the self._safety_stop flag.
+        """
+        ranges = msg.ranges
+        # Ignore invalid data AND anything closer than 20cm (self-detection/noise)
+        valid_ranges = [r for r in ranges if np.isfinite(r) and r > 0.2]
+        
+        if len(valid_ranges) > 0:
+            closest_object = min(valid_ranges)
+            
+            if self.target_locked:
+                safety_limit = 0.3 
+            else:
+                safety_limit = 0.8 
+            
+            if closest_object < safety_limit:
+                self.obstacle_detected = True
+                # DEBUG: Print exactly what distance triggered the stop
+                self.get_logger().warn(f"STOPPING: Object detected at {closest_object:.3f}m")
+            else:
+                self.obstacle_detected = False
+    # ---------------------------
+            
+            
 
     def _info_callback(self, msg):
         if msg.distortion_model != "plumb_bob":
@@ -119,6 +162,20 @@ class ArucoTarget(Node):
     def _image_callback(self, msg):
         self._image = self._bridge.imgmsg_to_cv2(msg, "bgr8") 
         twist = Twist()
+        
+        # --- NEW: Safety Check ---
+        # If LiDAR sees an obstacle, we STOP immediately and ignore the camera logic.
+        if self._safety_stop:
+            self.get_logger().warn("LIDAR DETECTED OBSTACLE - EMERGENCY STOP")
+            twist.linear.x = 0.0
+            twist.angular.z = 0.0
+            self._cmd_pub.publish(twist)
+            # We still want to show the image, so we don't return yet, 
+            # but we will skip the rest of the movement logic.
+            cv2.imshow('window', self._image)
+            cv2.waitKey(3)
+            return
+        # ------------------------- 
 
         grey = cv2.cvtColor(self._image, cv2.COLOR_BGR2GRAY)
         if parse(cv2.__version__) < parse('4.7.0'):
@@ -126,11 +183,12 @@ class ArucoTarget(Node):
         else:
             corners, ids, rejectedImgPoints = self._aruco_detector.detectMarkers(grey)
         frame = cv2.aruco.drawDetectedMarkers(self._image, corners, ids)
+        
         if ids is None:
             self.get_logger().info(f"No targets found!")
             twist.angular.z = 0.3
             self._cmd_pub.publish(twist)
-            return
+            return # Don't forget to show image before returning if you want to see it spinning
         if self._cameraMatrix is None:
             self.get_logger().info(f"We have not yet received a camera_info message")
             return
