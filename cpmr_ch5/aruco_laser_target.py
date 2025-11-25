@@ -132,8 +132,8 @@ class ArucoTarget(Node):
         Updates the self._safety_stop flag.
         """
         ranges = msg.ranges
-        # Ignore invalid data AND anything closer than 20cm (self-detection/noise)
-        valid_ranges = [r for r in ranges if np.isfinite(r) and r > 0.2]
+        # Ignore invalid data AND anything closer than 25cm (self-detection/noise)
+        valid_ranges = [r for r in ranges if np.isfinite(r) and r > 0.25]
         
         if len(valid_ranges) > 0:
             closest_object = min(valid_ranges)
@@ -186,7 +186,7 @@ class ArucoTarget(Node):
         
         if ids is None:
             self.get_logger().info(f"No targets found!")
-            twist.angular.z = 0.3
+            twist.angular.z = 0.0
             self._cmd_pub.publish(twist)
             return # Don't forget to show image before returning if you want to see it spinning
         if self._cameraMatrix is None:
