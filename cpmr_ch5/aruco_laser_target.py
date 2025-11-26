@@ -212,7 +212,7 @@ class ArucoTarget(Node):
                 # Move forward until 1 m away
                 twist.linear.x = 0.1
                 self._cmd_pub.publish(twist)
-                self.get_logger().info("Moving forward...")
+                #self.get_logger().info("Moving forward...")
             else:
                 # Stop once within 1 m
                 twist.linear.x = 0.0
