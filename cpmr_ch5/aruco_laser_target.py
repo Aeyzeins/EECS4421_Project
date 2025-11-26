@@ -95,6 +95,10 @@ class ArucoTarget(Node):
         # We define these BEFORE creating subscriptions so they exist when callbacks fire
         self.target_locked = False     
         self.obstacle_detected = False 
+        #self.avoid_turn = 0.0 # Use to store +0.5 (Left) or -0.5 (Right)
+        
+        self.avoid_bias = 0.0
+        
         # ---------------------------------------
         
         # --- NEW: LiDAR Subscription ---
@@ -127,28 +131,51 @@ class ArucoTarget(Node):
             
         # --- NEW: LiDAR Callback ---
     def _scan_callback(self, msg):
-        """
-        Checks LiDAR data for obstacles.
-        Updates the self._safety_stop flag.
-        """
         ranges = msg.ranges
-        # Ignore invalid data AND anything closer than 25cm (self-detection/noise)
-        valid_ranges = [r for r in ranges if np.isfinite(r) and r > 0.25]
+        valid_entries = [(r, i) for i, r in enumerate(ranges) if np.isfinite(r) and r > 0.25]
         
-        if len(valid_ranges) > 0:
-            closest_object = min(valid_ranges)
+        if len(valid_entries) > 0:
+            closest_dist, closest_index = min(valid_entries, key=lambda x: x[0])
             
-            if self.target_locked:
-                safety_limit = 0.3 
-            else:
-                safety_limit = 0.8 
+            # 1. Define the "Center" width (e.g., middle 10% of the scan)
+            total_indices = len(ranges)
+            mid_point = total_indices / 2
+            center_width = total_indices * 0.1 # 10% wide cone
             
-            if closest_object < safety_limit:
+            # Calculate the start and end of the center cone
+            center_start = mid_point - (center_width / 2)
+            center_end = mid_point + (center_width / 2)
+
+            safety_limit = 0.3 
+            
+            if closest_dist < safety_limit:
                 self.obstacle_detected = True
-                # DEBUG: Print exactly what distance triggered the stop
-                self.get_logger().warn(f"STOPPING: Object detected at {closest_object:.3f}m")
+                
+                # 2. Check: Is it Dead Center?
+                if center_start < closest_index < center_end:
+                    # Object is directly in front -> STOP
+                    #self.avoid_turn = 0.0
+                    self.avoid_bias = 0.0
+                    self.stop_completely = True # New flag to signal a full stop
+                    self.get_logger().warn(f"BLOCKED FRONT ({closest_dist:.2f}m) - STOPPING")
+                
+                # 3. Check Left vs Right (for glancing blows)
+                elif closest_index < mid_point:
+                    # Object on Left -> Turn Right (Negative)
+                    #self.avoid_turn = 0.05
+                    self.avoid_bias = -0.3
+                    self.stop_completely = False
+                    self.get_logger().warn("Avoiding Right Object")
+                else:
+                    # Object on Right -> Turn Left (Positive)
+                    #self.avoid_turn = -0.05
+                    self.avoid_bias = 0.3
+                    self.stop_completely = False
+                    self.get_logger().warn("Avoiding Left Object")
             else:
                 self.obstacle_detected = False
+                self.stop_completely = False
+                self.avoid_bias = 0.0
     # ---------------------------
             
             
@@ -162,73 +189,83 @@ class ArucoTarget(Node):
     def _image_callback(self, msg):
         self._image = self._bridge.imgmsg_to_cv2(msg, "bgr8") 
         twist = Twist()
-        
-        # --- NEW: Safety Check ---
-        # If LiDAR sees an obstacle, we STOP immediately and ignore the camera logic.
-        if self._safety_stop:
-            self.get_logger().warn("LIDAR DETECTED OBSTACLE - EMERGENCY STOP")
+
+        # 1. EMERGENCY STOP (Dead Center Block)
+        if self.obstacle_detected and self.stop_completely:
             twist.linear.x = 0.0
             twist.angular.z = 0.0
             self._cmd_pub.publish(twist)
-            # We still want to show the image, so we don't return yet, 
-            # but we will skip the rest of the movement logic.
             cv2.imshow('window', self._image)
             cv2.waitKey(3)
             return
-        # ------------------------- 
 
+        # 2. ArUco Detection
         grey = cv2.cvtColor(self._image, cv2.COLOR_BGR2GRAY)
+        
         if parse(cv2.__version__) < parse('4.7.0'):
             corners, ids, rejectedImgPoints = cv2.aruco.detectMarkers(grey, self._aruco_dict)
         else:
             corners, ids, rejectedImgPoints = self._aruco_detector.detectMarkers(grey)
+        
+        # Draw the square around the marker (this is safe even if ids is None)
         frame = cv2.aruco.drawDetectedMarkers(self._image, corners, ids)
         
+        # 3. DECISION LOGIC
         if ids is None:
-            self.get_logger().info(f"No targets found!")
-            twist.angular.z = 0.0
+            # --- CASE A: NO TARGET SEEN ---
+            if self.obstacle_detected:
+                # Blind Avoidance
+                twist.linear.x = 0.05
+                twist.angular.z = -1.0 * self.avoid_bias 
+                self.get_logger().info("No target found #1")
+            else:
+                # No Target, No Obstacle -> Stop
+                twist.linear.x = 0.0
+                twist.angular.z = 0.0
+                self.get_logger().info("No target found #2")
+                
+            # Show image immediately and return
+            cv2.imshow('window', frame)
+            cv2.waitKey(3)
             self._cmd_pub.publish(twist)
-            return # Don't forget to show image before returning if you want to see it spinning
-        if self._cameraMatrix is None:
-            self.get_logger().info(f"We have not yet received a camera_info message")
-            return
-
-        if parse(cv2.__version__) < parse('4.7.0'):
-            rvec, tvec, _objPoints = cv2.aruco.estimatePoseSingleMarkers(corners, self._target_width, self._cameraMatrix, self._distortion)
+            return  # Stop here, do not try to access rvec/tvec
+                
         else:
-            rvec, tvec, _objPoints = local_estimatePoseSingleMarkers(corners, self._target_width, self._cameraMatrix, self._distortion)
-        result = self._image.copy()
+            # --- CASE B: TARGET FOUND ---
+            if parse(cv2.__version__) < parse('4.7.0'):
+                rvec, tvec, _ = cv2.aruco.estimatePoseSingleMarkers(corners, self._target_width, self._cameraMatrix, self._distortion)
+            else:
+                rvec, tvec, _ = local_estimatePoseSingleMarkers(corners, self._target_width, self._cameraMatrix, self._distortion)
+        
+            # Tracking Logic
+            t = tvec[0].flatten() 
+            z_dist = float(t[2])
+            x_offset = float(t[0]) 
+            real_angle = math.atan2(x_offset, z_dist)   
+        
+            self.get_logger().info(f"Target: {z_dist:.2f}m away, Offset: {x_offset:.2f}m")
 
-        #Stopping the rotation and moving towards the target.
-        for r, t in zip(rvec, tvec):
-            # t = [x, y, z], so z is the distance forward
-            t = t.flatten()   # ensure shape is (3,)
-            z_dist = float(t[2])   # forward distance (m)
-            self.get_logger().info(f"Target distance: {z_dist:.2f} m")
-            # Always stop spinning once marker is seen
-            twist.angular.z = 0.0  
+            steer_error = real_angle + self.avoid_bias
+            
+            k_p = 1.5 
+            twist.angular.z = -k_p * steer_error
 
             if z_dist > 1.0:
-                # Move forward until 1 m away
-                twist.linear.x = 0.1
-                self._cmd_pub.publish(twist)
-                #self.get_logger().info("Moving forward...")
+               twist.linear.x = 0.2
             else:
-                # Stop once within 1 m
-                twist.linear.x = 0.0
-                self._cmd_pub.publish(twist)
-                self.get_logger().info("Reached 1m from target, stopping")
+               twist.linear.x = 0.0
 
-            # Draw axes for visualization
-            if parse(cv2.__version__) < parse('4.7.0'):
-                result = cv2.aruco.drawAxis(result, self._cameraMatrix, self._distortion, r, t, self._target_width)
-            else:
-                result = cv2.drawFrameAxes(result, self._cameraMatrix, self._distortion, r, t, self._target_width)
+            # Draw axes for visualization (ONLY safely done here inside the else block)
+            for r, t in zip(rvec, tvec):
+                if parse(cv2.__version__) < parse('4.7.0'):
+                    frame = cv2.aruco.drawAxis(frame, self._cameraMatrix, self._distortion, r, t, self._target_width)
+                else:
+                    frame = cv2.drawFrameAxes(frame, self._cameraMatrix, self._distortion, r, t, self._target_width)
   
-        self._cmd_pub.publish(twist)       
-        cv2.imshow('window', result)
-        cv2.waitKey(3)
-
+            cv2.imshow('window', frame)
+            cv2.waitKey(3)
+            self._cmd_pub.publish(twist)
+        # --------------------------
 
 def main(args=None):
     rclpy.init(args=args)
