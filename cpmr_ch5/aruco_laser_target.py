@@ -132,21 +132,21 @@ class ArucoTarget(Node):
         # --- NEW: LiDAR Callback ---
     def _scan_callback(self, msg):
         ranges = msg.ranges
-        valid_entries = [(r, i) for i, r in enumerate(ranges) if np.isfinite(r) and r > 0.25]
+        valid_entries = [(r, i) for i, r in enumerate(ranges) if np.isfinite(r) and r > 0.3]
         
         if len(valid_entries) > 0:
             closest_dist, closest_index = min(valid_entries, key=lambda x: x[0])
             
-            # 1. Define the "Center" width (e.g., middle 10% of the scan)
+            
             total_indices = len(ranges)
             mid_point = total_indices / 2
-            center_width = total_indices * 0.1 # 10% wide cone
+            center_width = total_indices * 0.3 
             
             # Calculate the start and end of the center cone
             center_start = mid_point - (center_width / 2)
             center_end = mid_point + (center_width / 2)
 
-            safety_limit = 0.3 
+            safety_limit = 0.5 
             
             if closest_dist < safety_limit:
                 self.obstacle_detected = True
@@ -154,21 +154,18 @@ class ArucoTarget(Node):
                 # 2. Check: Is it Dead Center?
                 if center_start < closest_index < center_end:
                     # Object is directly in front -> STOP
-                    #self.avoid_turn = 0.0
                     self.avoid_bias = 0.0
                     self.stop_completely = True # New flag to signal a full stop
-                    self.get_logger().warn(f"BLOCKED FRONT ({closest_dist:.2f}m) - STOPPING")
+                    self.get_logger().warn(f"OBJECT DETECTED: PLEASE MOVE ASIDE!")
                 
                 # 3. Check Left vs Right (for glancing blows)
                 elif closest_index < mid_point:
                     # Object on Left -> Turn Right (Negative)
-                    #self.avoid_turn = 0.05
                     self.avoid_bias = -0.3
                     self.stop_completely = False
                     self.get_logger().warn("Avoiding Right Object")
                 else:
                     # Object on Right -> Turn Left (Positive)
-                    #self.avoid_turn = -0.05
                     self.avoid_bias = 0.3
                     self.stop_completely = False
                     self.get_logger().warn("Avoiding Left Object")
@@ -179,7 +176,6 @@ class ArucoTarget(Node):
     # ---------------------------
             
             
-
     def _info_callback(self, msg):
         if msg.distortion_model != "plumb_bob":
             self.get_logger().error(f"We can only deal with plumb_bob distortion {msg.distortion_model}")
@@ -249,8 +245,14 @@ class ArucoTarget(Node):
             
             k_p = 1.5 
             twist.angular.z = -k_p * steer_error
-
-            if z_dist > 1.0:
+            
+            # If an obstacle is detected (within 1m), force linear velocity to 0.
+            # We allow angular velocity (steering) to remain so it can turn away, 
+            # but we forbid moving forward.
+            if self.obstacle_detected:
+                twist.linear.x = 0.0
+                self.get_logger().info("Target seen, but OBSTACLE DETECTED -> Halting linear")
+            elif z_dist > 0.5:
                twist.linear.x = 0.2
             else:
                twist.linear.x = 0.0
@@ -265,7 +267,7 @@ class ArucoTarget(Node):
             cv2.imshow('window', frame)
             cv2.waitKey(3)
             self._cmd_pub.publish(twist)
-        # --------------------------
+        # --------------------------------
 
 def main(args=None):
     rclpy.init(args=args)
