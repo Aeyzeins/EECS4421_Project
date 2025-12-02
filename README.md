@@ -1,4 +1,4 @@
-EECS4421: Introduction to Robotics
+# EECS4421: Introduction to Robotics
 
 Project: Mobile Robot
 
