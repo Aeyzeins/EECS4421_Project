@@ -1,21 +1,18 @@
-This repository contains code associated with Chapter 5 of CPMR 3rd Editon by G. Dudek and M. Jenkin. Specific ros2 launch files provided include
+EECS4421: Introduction to Robotics
 
-* aruco-robot.launch.py - This provides a simulated aruco target and robot
-* camera-robot.launch.py - A basic simulated differential drive robot with a camera
-* canny-edges-camera-robot.launch.py - A simulated robot with a camera running Canny edge detection
-* good-features-camera-robot.launch.py - A simulated robot with a camera running good features to track
-* harris-corners-camera-robot.launch.py - A simulated robot with a camera running Harris corner detector
-* view-camera-robot.launch.py - A simple node that displays the value of /mycamera/image_raw 
+Project: Mobile Robot
 
-In addition to these launch files, the following ROS run files are provided
+Group Members:
+Kevin Duong 217043936
+Kevin Nguyen 217229255
+Tom Vo 218799171
+Anagha Koroth 218819516
 
-* opencv_camera - This connects to /dev/Video0 using opencv and publishes Images on /mycamera/image_raw
-* view_camera - Display contents of /mycamera/image_raw and save frames whenever the s key is pressed
+This project utilizes ROS2 and Gazebo to create and model an autonomous mobile robot in a virtual laboratory setting. 
 
-To use the Aruco targets provided (i) follow the instructions in the gazebo_models directory to 
-add the models to your local gazebo library. Once you do this, run the aruco-robot.launch.py
-There will be no target available. However, under the insert tab in Gazebo you will see entries for
-a number of Aruco tag objects. Insert one and drag it to the location you want in the world, to 
-see the tag being recognized by ROS.
+This repository contains code associated with Chapter 5 and 4 of CPMR 3rd Editon by G. Dudek and M. Jenkin.
 
-Tools to calibrate a monocular camera and to use Aurco targets in the real world can be found in the tools sub-directory.
+* aruco-laser-robot.launch.py - This provides a simulated aruco target and robot with both Lidar and Camera.
+
+* aruco-laser-target.py - Main file 
+
