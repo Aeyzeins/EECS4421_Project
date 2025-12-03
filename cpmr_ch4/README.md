@@ -1,12 +1,6 @@
-Chapter 4 provides the following launch files
+Chapter 4 files but only for map is what matters here.
 
-* bumper-robot.launch.py - This launches a bumper equipped differential drive robot in an empty Gazebo world
-* imu-robot.launch.py - This launches an imu equipped differential drive robot in an empty Gazebo world
-* laser-robot.launch.py - This launches a LIDAR equipped differential drive robot in an empty Gazeo world
-* lidar-collector.launch.py - This launches a LIDAR data collection node (and assumes that laser-robot.launch.py is already running)
-* sonar-robot.launch.py - This launches a SONAR equipped differential drive robot in an empty Gazebo world
-
-Robots can be driven around using a standard teleoperational node
+In the ~/CPMR3/ros2_ws/src/* , drag the cpmr_ch4 from the repo to that directory.
 
 
 

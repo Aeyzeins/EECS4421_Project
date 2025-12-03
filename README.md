@@ -22,4 +22,4 @@ The aruco targets have to be manually imported via:
 * 1. Making a directory for the ~/.gazebo/models
 * 2. Copying the gazebo_models from this repository to the new directory of ~/.gazebo/models
 
-The map used from the demo, is separate from the main project.
+The map used from the demo is included here. For now, it is intended to drag the cpmr_ch4 folder containing the map to the src folder of CPMR3.
